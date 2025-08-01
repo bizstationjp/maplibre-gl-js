@@ -15,7 +15,7 @@ import {MercatorCoordinate} from '../geo/mercator_coordinate';
 export function isInBoundsForTileZoomXY(zoom: number, x: number, y: number): boolean {
     return !(
         zoom < MIN_TILE_ZOOM ||
-        zoom > MAX_TILE_ZOOM ||
+        // zoom > MAX_TILE_ZOOM ||
         y < 0 ||
         y >= Math.pow(2, zoom) ||
         x < 0 ||
