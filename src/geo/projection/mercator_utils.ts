@@ -5,6 +5,8 @@ import {MercatorCoordinate, mercatorXfromLng, mercatorYfromLat, mercatorZfromAlt
 import Point from '@mapbox/point-geometry';
 import type {UnwrappedTileIDType} from '../transform_helper';
 import type {LngLat} from '../lng_lat';
+import vt from '@mapbox/vector-tile';
+import Protobuf from 'pbf';
 
 /*
 * The maximum angle to use for the Mercator horizon. This must be less than 90
@@ -149,4 +151,46 @@ export function lngLatToTileCoordinates(
         y: tileY,
         z: zoom,
     };
+}
+
+/**
+ * Parse an MVT (Mapbox Vector Tile) from binary data and return features with properties.
+ * @param tileData - The binary MVT data (ArrayBuffer or Uint8Array)
+ * @param tileX - Tile X coordinate
+ * @param tileY - Tile Y coordinate  
+ * @param tileZ - Tile Z coordinate (zoom level)
+ * @returns Object containing layers with their features and properties
+ */
+export function parseMVTTile(
+    tileData: ArrayBuffer | Uint8Array,
+    tileX: number,
+    tileY: number,
+    tileZ: number
+): {[layerName: string]: Array<{properties: {[key: string]: any}; geometry: any; id?: number | string}>} {
+    try {
+        const vectorTile = new vt.VectorTile(new Protobuf(tileData));
+        const result: {[layerName: string]: Array<{properties: {[key: string]: any}; geometry: any; id?: number | string}>} = {};
+        
+        // Iterate through all layers in the tile
+        for (const layerName in vectorTile.layers) {
+            const layer = vectorTile.layers[layerName];
+            const features: Array<{properties: {[key: string]: any}; geometry: any; id?: number | string}> = [];
+            
+            // Extract all features from this layer
+            for (let i = 0; i < layer.length; i++) {
+                const feature = layer.feature(i);
+                features.push({
+                    properties: feature.properties,
+                    geometry: feature.toGeoJSON(tileX, tileY, tileZ).geometry,
+                    id: feature.id
+                });
+            }
+            
+            result[layerName] = features;
+        }
+        
+        return result;
+    } catch (error) {
+        throw new Error(`Failed to parse MVT tile: ${(error as Error).message}`);
+    }
 }
