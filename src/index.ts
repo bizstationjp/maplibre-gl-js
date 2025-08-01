@@ -15,6 +15,7 @@ import {LngLat, type LngLatLike} from './geo/lng_lat';
 import {LngLatBounds, type LngLatBoundsLike} from './geo/lng_lat_bounds';
 import Point from '@mapbox/point-geometry';
 import {MercatorCoordinate} from './geo/mercator_coordinate';
+import {lngLatToTileCoordinates} from './geo/projection/mercator_utils';
 import {Evented, type ErrorEvent, Event} from './util/evented';
 import {config} from './util/config';
 import {rtlMainThreadPluginFactory} from './source/rtl_text_plugin_main_thread';
@@ -254,5 +255,6 @@ export {
     removeProtocol,
     addSourceType,
     importScriptInWorkers,
-    createTileMesh
+    createTileMesh,
+    lngLatToTileCoordinates
 };

@@ -68,29 +68,85 @@ export function unprojectFromWorldCoordinates(worldSize: number, point: Point): 
  * The calculated value is the horizontal line from the camera-height to sea-level.
  * @returns Horizon above center in pixels.
  */
-export function getMercatorHorizon(transform: {pitch: number; cameraToCenterDistance: number}): number {
-    return transform.cameraToCenterDistance * Math.min(Math.tan(degreesToRadians(90 - transform.pitch)) * 0.85,
-        Math.tan(degreesToRadians(maxMercatorHorizonAngle - transform.pitch)));
+export function getMercatorHorizon(transform: {
+    pitch: number;
+    cameraToCenterDistance: number;
+}): number {
+    return (
+        transform.cameraToCenterDistance *
+        Math.min(
+            Math.tan(degreesToRadians(90 - transform.pitch)) * 0.85,
+            Math.tan(
+                degreesToRadians(maxMercatorHorizonAngle - transform.pitch)
+            )
+        )
+    );
 }
 
-export function calculateTileMatrix(unwrappedTileID: UnwrappedTileIDType, worldSize: number): mat4 {
+export function calculateTileMatrix(
+    unwrappedTileID: UnwrappedTileIDType,
+    worldSize: number
+): mat4 {
     const canonical = unwrappedTileID.canonical;
     const scale = worldSize / zoomScale(canonical.z);
-    const unwrappedX = canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
+    const unwrappedX =
+        canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
 
     const worldMatrix = mat4.identity(new Float64Array(16) as any);
-    mat4.translate(worldMatrix, worldMatrix, [unwrappedX * scale, canonical.y * scale, 0]);
+    mat4.translate(worldMatrix, worldMatrix, [
+        unwrappedX * scale,
+        canonical.y * scale,
+        0,
+    ]);
     mat4.scale(worldMatrix, worldMatrix, [scale / EXTENT, scale / EXTENT, 1]);
     return worldMatrix;
 }
 
-export function cameraMercatorCoordinateFromCenterAndRotation(center: LngLat, elevation: number, pitch: number, bearing: number, distance: number): MercatorCoordinate {
+export function cameraMercatorCoordinateFromCenterAndRotation(
+    center: LngLat,
+    elevation: number,
+    pitch: number,
+    bearing: number,
+    distance: number
+): MercatorCoordinate {
     const centerMercator = MercatorCoordinate.fromLngLat(center, elevation);
     const mercUnitsPerMeter = mercatorZfromAltitude(1, center.lat);
     const dMercator = distance * mercUnitsPerMeter;
     const dzMercator = dMercator * Math.cos(degreesToRadians(pitch));
-    const dhMercator = Math.sqrt(dMercator * dMercator - dzMercator * dzMercator);
+    const dhMercator = Math.sqrt(
+        dMercator * dMercator - dzMercator * dzMercator
+    );
     const dxMercator = dhMercator * Math.sin(degreesToRadians(-bearing));
     const dyMercator = dhMercator * Math.cos(degreesToRadians(-bearing));
-    return new MercatorCoordinate(centerMercator.x + dxMercator, centerMercator.y + dyMercator, centerMercator.z + dzMercator);
+    return new MercatorCoordinate(
+        centerMercator.x + dxMercator,
+        centerMercator.y + dyMercator,
+        centerMercator.z + dzMercator
+    );
+}
+
+/**
+ * Convert from lat/lng to tile coordinates at a specific zoom level.
+ * @param lng - Longitude
+ * @param lat - Latitude
+ * @param zoom - Target zoom level
+ * @returns Object with tile coordinates x, y, z
+ */
+export function lngLatToTileCoordinates(
+    lng: number,
+    lat: number,
+    zoom: number
+): { x: number; y: number; z: number } {
+    const mercatorCoordinate = MercatorCoordinate.fromLngLat({ lng, lat });
+    const worldSize = (1 << zoom) * EXTENT;
+    const mercatorX = mercatorCoordinate.x * worldSize;
+    const mercatorY = mercatorCoordinate.y * worldSize;
+    const tileX = Math.floor(mercatorX / EXTENT);
+    const tileY = Math.floor(mercatorY / EXTENT);
+
+    return {
+        x: tileX,
+        y: tileY,
+        z: zoom,
+    };
 }
