@@ -1,12 +1,12 @@
-import {DOM} from '../../util/dom';
+import { DOM } from "../../util/dom";
 
-import type {Map} from '../map';
-import type {ControlPosition, IControl} from './control';
+import type { Map } from "../map";
+import type { ControlPosition, IControl } from "./control";
 
 /**
  * The unit type for length to use for the {@link ScaleControl}
  */
-export type Unit = 'imperial' | 'metric' | 'nautical';
+export type Unit = "imperial" | "metric" | "nautical";
 
 /**
  * The {@link ScaleControl} options object
@@ -26,7 +26,7 @@ type ScaleControlOptions = {
 
 const defaultOptions: ScaleControlOptions = {
     maxWidth: 100,
-    unit: 'metric'
+    unit: "metric",
 };
 
 /**
@@ -54,11 +54,11 @@ export class ScaleControl implements IControl {
      * @param options - the control's options
      */
     constructor(options?: ScaleControlOptions) {
-        this.options = {...defaultOptions, ...options};
+        this.options = { ...defaultOptions, ...options };
     }
 
     getDefaultPosition(): ControlPosition {
-        return 'bottom-left';
+        return "bottom-left";
     }
 
     _onMove = () => {
@@ -68,9 +68,13 @@ export class ScaleControl implements IControl {
     /** {@inheritDoc IControl.onAdd} */
     onAdd(map: Map) {
         this._map = map;
-        this._container = DOM.create('div', 'maplibregl-ctrl maplibregl-ctrl-scale', map.getContainer());
+        this._container = DOM.create(
+            "div",
+            "maplibregl-ctrl maplibregl-ctrl-scale",
+            map.getContainer()
+        );
 
-        this._map.on('move', this._onMove);
+        this._map.on("move", this._onMove);
         this._onMove();
 
         return this._container;
@@ -79,7 +83,7 @@ export class ScaleControl implements IControl {
     /** {@inheritDoc IControl.onRemove} */
     onRemove() {
         DOM.remove(this._container);
-        this._map.off('move', this._onMove);
+        this._map.off("move", this._onMove);
         this._map = undefined;
     }
 
@@ -94,13 +98,17 @@ export class ScaleControl implements IControl {
     };
 }
 
-function updateScale(map: Map, container: HTMLElement, options: ScaleControlOptions) {
+function updateScale(
+    map: Map,
+    container: HTMLElement,
+    options: ScaleControlOptions
+) {
     // A horizontal scale is imagined to be present at center of the map
     // container with maximum length (Default) as 100px.
     // Using spherical law of cosines approximation, the real distance is
     // found between the two coordinates.
     // Minimum maxWidth is calculated for the scale box.
-    const optWidth = options && options.maxWidth || 100;
+    const optWidth = (options && options.maxWidth) || 100;
     const y = map._container.clientHeight / 2;
     const x = map._container.clientWidth / 2;
     const left = map.unproject([x - optWidth / 2, y]);
@@ -109,29 +117,88 @@ function updateScale(map: Map, container: HTMLElement, options: ScaleControlOpti
     const globeWidth = Math.round(map.project(right).x - map.project(left).x);
     const maxWidth = Math.min(optWidth, globeWidth, map._container.clientWidth);
 
-    const maxMeters = left.distanceTo(right);
+    let maxMeters = left.distanceTo(right);
+
+    // For very small distances (when distanceTo returns 0 due to precision limits),
+    // calculate meters per pixel directly from zoom level and latitude
+    if (maxMeters === 0 || maxMeters < 0.0001) {
+        const zoom = map.getZoom();
+        const lat = map.getCenter().lat;
+        // Earth circumference at the equator in meters
+        const earthCircumference = 2 * Math.PI * 6371008.8;
+        // Circumference at current latitude
+        const circumferenceAtLat =
+            earthCircumference * Math.cos((lat * Math.PI) / 180);
+        // Meters per pixel at current zoom and latitude
+        const metersPerPixel = circumferenceAtLat / Math.pow(2, zoom + 8); // +8 for 256px tiles
+        maxMeters = metersPerPixel * optWidth;
+    }
     // The real distance corresponding to 100px scale length is rounded off to
     // near pretty number and the scale length for the same is found out.
     // Default unit of the scale is based on User's locale.
-    if (options && options.unit === 'imperial') {
+    if (options && options.unit === "imperial") {
         const maxFeet = 3.2808 * maxMeters;
         if (maxFeet > 5280) {
             const maxMiles = maxFeet / 5280;
-            setScale(container, maxWidth, maxMiles, map._getUIString('ScaleControl.Miles'));
+            setScale(
+                container,
+                maxWidth,
+                maxMiles,
+                map._getUIString("ScaleControl.Miles")
+            );
         } else {
-            setScale(container, maxWidth, maxFeet, map._getUIString('ScaleControl.Feet'));
+            setScale(
+                container,
+                maxWidth,
+                maxFeet,
+                map._getUIString("ScaleControl.Feet")
+            );
         }
-    } else if (options && options.unit === 'nautical') {
+    } else if (options && options.unit === "nautical") {
         const maxNauticals = maxMeters / 1852;
-        setScale(container, maxWidth, maxNauticals, map._getUIString('ScaleControl.NauticalMiles'));
+        setScale(
+            container,
+            maxWidth,
+            maxNauticals,
+            map._getUIString("ScaleControl.NauticalMiles")
+        );
     } else if (maxMeters >= 1000) {
-        setScale(container, maxWidth, maxMeters / 1000, map._getUIString('ScaleControl.Kilometers'));
+        setScale(
+            container,
+            maxWidth,
+            maxMeters / 1000,
+            map._getUIString("ScaleControl.Kilometers")
+        );
+    } else if (maxMeters >= 1) {
+        setScale(
+            container,
+            maxWidth,
+            maxMeters,
+            map._getUIString("ScaleControl.Meters")
+        );
+    } else if (maxMeters >= 0.01) {
+        setScale(
+            container,
+            maxWidth,
+            maxMeters * 100,
+            map._getUIString("ScaleControl.Centimeters")
+        );
     } else {
-        setScale(container, maxWidth, maxMeters, map._getUIString('ScaleControl.Meters'));
+        setScale(
+            container,
+            maxWidth,
+            maxMeters * 1000,
+            map._getUIString("ScaleControl.Millimeters")
+        );
     }
 }
 
-function setScale(container: HTMLElement, maxWidth: number, maxDistance: number, unit: string) {
+function setScale(
+    container: HTMLElement,
+    maxWidth: number,
+    maxDistance: number,
+    unit: string
+) {
     const distance = getRoundNum(maxDistance);
     const ratio = distance / maxDistance;
     container.style.width = `${maxWidth * ratio}px`;
@@ -144,14 +211,15 @@ function getDecimalRoundNum(d) {
 }
 
 function getRoundNum(num) {
-    const pow10 = Math.pow(10, (`${Math.floor(num)}`).length - 1);
-    let d = num / pow10;
+    if (num >= 1) {
+        const pow10 = Math.pow(10, `${Math.floor(num)}`.length - 1);
+        let d = num / pow10;
 
-    d = d >= 10 ? 10 :
-        d >= 5 ? 5 :
-            d >= 3 ? 3 :
-                d >= 2 ? 2 :
-                    d >= 1 ? 1 : getDecimalRoundNum(d);
+        d = d >= 10 ? 10 : d >= 5 ? 5 : d >= 3 ? 3 : d >= 2 ? 2 : 1;
 
-    return pow10 * d;
+        return pow10 * d;
+    } else {
+        // For numbers less than 1, use decimal rounding
+        return getDecimalRoundNum(num);
+    }
 }
