@@ -974,8 +974,8 @@ export class Style extends Evented {
             }
 
             // this layer is not in the style.layers array, so we pass an impossible array index
-            if (this._validate(validateStyle.layer,
-                `layers.${id}`, layerObject, {arrayIndex: -1}, options)) return;
+            // if (this._validate(validateStyle.layer,
+            //     `layers.${id}`, layerObject, {arrayIndex: -1}, options)) return;
 
             layer = createStyleLayer(layerObject as LayerSpecification | CustomLayerInterface);
             this._validateLayer(layer);
