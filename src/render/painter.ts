@@ -25,6 +25,7 @@ import {drawLine} from './draw_line';
 import {drawFill} from './draw_fill';
 import {drawFillExtrusion} from './draw_fill_extrusion';
 import {drawHillshade} from './draw_hillshade';
+import {drawColorRelief} from './draw_color_relief';
 import {drawRaster} from './draw_raster';
 import {drawBackground} from './draw_background';
 import {drawDebug, drawDebugPadding, selectDebugSource} from './draw_debug';
@@ -56,6 +57,7 @@ import {isLineStyleLayer} from '../style/style_layer/line_style_layer';
 import {isFillStyleLayer} from '../style/style_layer/fill_style_layer';
 import {isFillExtrusionStyleLayer} from '../style/style_layer/fill_extrusion_style_layer';
 import {isHillshadeStyleLayer} from '../style/style_layer/hillshade_style_layer';
+import {isColorReliefStyleLayer} from '../style/style_layer/color_relief_style_layer';
 import {isRasterStyleLayer} from '../style/style_layer/raster_style_layer';
 import {isBackgroundStyleLayer} from '../style/style_layer/background_style_layer';
 import {isCustomStyleLayer} from '../style/style_layer/custom_style_layer';
@@ -313,7 +315,7 @@ export class Painter {
 
             const mesh = projection.getMeshFromTileID(this.context, tileID.canonical, useBorders, true, 'stencil');
 
-            const projectionData = transform.getProjectionData({overscaledTileID: tileID, applyGlobeMatrix: true, applyTerrainMatrix: true});
+            const projectionData = transform.getProjectionData({overscaledTileID: tileID, applyGlobeMatrix: !renderToTexture, applyTerrainMatrix: true});
 
             program.draw(context, gl.TRIANGLES, DepthMode.disabled,
                 // Tests will always pass, and ref value will be written to stencil buffer.
@@ -599,7 +601,7 @@ export class Painter {
             // separate clipping masks
             const coords = (layer.type === 'symbol' ? coordsDescendingSymbol : coordsDescending)[layer.source];
 
-            this._renderTileClippingMasks(layer, coordsAscending[layer.source], false);
+            this._renderTileClippingMasks(layer, coordsAscending[layer.source], !!this.renderToTexture);
             this.renderLayer(this, sourceCache, layer, coords, renderOptions);
         }
 
@@ -671,6 +673,8 @@ export class Painter {
             drawFillExtrusion(painter, sourceCache, layer, coords, renderOptions);
         } else if (isHillshadeStyleLayer(layer)) {
             drawHillshade(painter, sourceCache, layer, coords, renderOptions);
+        } else if (isColorReliefStyleLayer(layer)) {
+            drawColorRelief(painter, sourceCache, layer, coords, renderOptions);
         } else if (isRasterStyleLayer(layer)) {
             drawRaster(painter, sourceCache, layer, coords, renderOptions);
         } else if (isBackgroundStyleLayer(layer)) {

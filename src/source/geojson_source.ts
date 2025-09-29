@@ -5,6 +5,7 @@ import {EXTENT} from '../data/extent';
 import {ResourceType} from '../util/request_manager';
 import {browser} from '../util/browser';
 import {LngLatBounds} from '../geo/lng_lat_bounds';
+import {mergeSourceDiffs} from './geojson_source_diff';
 
 import type {Source} from './source';
 import type {Map} from '../ui/map';
@@ -44,7 +45,8 @@ export type SetClusterOptions = {
      */
     cluster?: boolean;
     /**
-     * The cluster's max zoom
+     * The cluster's max zoom.
+     * Non-integer values are rounded to the closest integer due to supercluster integer value requirements.
      */
     clusterMaxZoom?: number;
     /**
@@ -102,10 +104,10 @@ export type SetClusterOptions = {
  *   }]
  * });
  * ```
- * @see [Draw GeoJSON points](https://maplibre.org/maplibre-gl-js/docs/examples/geojson-markers/)
- * @see [Add a GeoJSON line](https://maplibre.org/maplibre-gl-js/docs/examples/geojson-line/)
- * @see [Create a heatmap from points](https://maplibre.org/maplibre-gl-js/docs/examples/heatmap-layer/)
- * @see [Create and style clusters](https://maplibre.org/maplibre-gl-js/docs/examples/cluster/)
+ * @see [Draw GeoJSON points](https://maplibre.org/maplibre-gl-js/docs/examples/draw-geojson-points/)
+ * @see [Add a GeoJSON line](https://maplibre.org/maplibre-gl-js/docs/examples/add-a-geojson-line/)
+ * @see [Create a heatmap from points](https://maplibre.org/maplibre-gl-js/docs/examples/create-a-heatmap-layer/)
+ * @see [Create and style clusters](https://maplibre.org/maplibre-gl-js/docs/examples/create-and-style-clusters/)
  */
 export class GeoJSONSource extends Evented implements Source {
     type: 'geojson';
@@ -123,7 +125,8 @@ export class GeoJSONSource extends Evented implements Source {
     workerOptions: GeoJSONWorkerOptions;
     map: Map;
     actor: Actor;
-    _pendingLoads: number;
+    _isUpdatingWorker: boolean;
+    _pendingWorkerUpdate: { data?: GeoJSON.GeoJSON | string; diff?: GeoJSONSourceDiff };
     _collectResourceTiming: boolean;
     _removed: boolean;
 
@@ -143,12 +146,13 @@ export class GeoJSONSource extends Evented implements Source {
         this.isTileClipped = true;
         this.reparseOverscaled = true;
         this._removed = false;
-        this._pendingLoads = 0;
+        this._isUpdatingWorker = false;
+        this._pendingWorkerUpdate = {data: options.data};
 
         this.actor = dispatcher.getActor();
         this.setEventedParent(eventedParent);
 
-        this._data = (options.data as any);
+        this._data = options.data;
         this._options = extend({}, options);
 
         this._collectResourceTiming = options.collectResourceTiming;
@@ -178,7 +182,7 @@ export class GeoJSONSource extends Evented implements Source {
                 generateId: options.generateId || false
             },
             superclusterOptions: {
-                maxZoom: options.clusterMaxZoom !== undefined ? options.clusterMaxZoom : this.maxzoom - 1,
+                maxZoom: this._getClusterMaxZoom(options.clusterMaxZoom),
                 minPoints: Math.max(2, options.clusterMinPoints || 2),
                 extent: EXTENT,
                 radius: this._pixelsToTileUnits(options.clusterRadius || 50),
@@ -199,6 +203,14 @@ export class GeoJSONSource extends Evented implements Source {
         return pixelValue * (EXTENT / this.tileSize);
     }
 
+    private _getClusterMaxZoom(clusterMaxZoom: number): number {
+        const effectiveClusterMaxZoom = clusterMaxZoom ? Math.round(clusterMaxZoom) : this.maxzoom - 1;
+        if (!(Number.isInteger(clusterMaxZoom) || clusterMaxZoom === undefined)) {
+            warnOnce(`Integer expected for option 'clusterMaxZoom': provided value "${clusterMaxZoom}" rounded to "${effectiveClusterMaxZoom}"`);
+        }
+        return effectiveClusterMaxZoom;
+    }
+
     async load() {
         await this._updateWorkerData();
     }
@@ -215,8 +227,8 @@ export class GeoJSONSource extends Evented implements Source {
      */
     setData(data: GeoJSON.GeoJSON | string): this {
         this._data = data;
+        this._pendingWorkerUpdate = {data};
         this._updateWorkerData();
-
         return this;
     }
 
@@ -235,8 +247,8 @@ export class GeoJSONSource extends Evented implements Source {
      * @param diff - The changes that need to be applied.
      */
     updateData(diff: GeoJSONSourceDiff): this {
-        this._updateWorkerData(diff);
-
+        this._pendingWorkerUpdate.diff = mergeSourceDiffs(this._pendingWorkerUpdate.diff, diff);
+        this._updateWorkerData();
         return this;
     }
 
@@ -253,7 +265,7 @@ export class GeoJSONSource extends Evented implements Source {
     private getCoordinatesFromGeometry(geometry: GeoJSON.Geometry): number[] {
         if (geometry.type === 'GeometryCollection') {
             return geometry.geometries.map((g: Exclude<GeoJSON.Geometry, GeoJSON.GeometryCollection>) => g.coordinates).flat(Infinity) as number[];
-        } 
+        }
         return geometry.coordinates.flat(Infinity) as number[];
     }
 
@@ -299,7 +311,9 @@ export class GeoJSONSource extends Evented implements Source {
         this.workerOptions.cluster = options.cluster;
         if (options) {
             if (options.clusterRadius !== undefined) this.workerOptions.superclusterOptions.radius = this._pixelsToTileUnits(options.clusterRadius);
-            if (options.clusterMaxZoom !== undefined) this.workerOptions.superclusterOptions.maxZoom = options.clusterMaxZoom;
+            if (options.clusterMaxZoom !== undefined) {
+                this.workerOptions.superclusterOptions.maxZoom = this._getClusterMaxZoom(options.clusterMaxZoom);
+            }
         }
         this._updateWorkerData();
         return this;
@@ -364,54 +378,75 @@ export class GeoJSONSource extends Evented implements Source {
      * Responsible for invoking WorkerSource's geojson.loadData target, which
      * handles loading the geojson data and preparing to serve it up as tiles,
      * using geojson-vt or supercluster as appropriate.
-     * @param diff - the diff object
      */
-    async _updateWorkerData(diff?: GeoJSONSourceDiff) {
-        const options: LoadGeoJSONParameters = extend({type: this.type}, this.workerOptions);
-        if (diff) {
-            options.dataDiff = diff;
-        } else if (typeof this._data === 'string') {
-            options.request = this.map._requestManager.transformRequest(browser.resolveURL(this._data as string), ResourceType.Source);
-            options.request.collectResourceTiming = this._collectResourceTiming;
-        } else {
-            options.data = JSON.stringify(this._data);
+    async _updateWorkerData(): Promise<void> {
+        if (this._isUpdatingWorker) return;
+
+        const {data, diff} = this._pendingWorkerUpdate;
+
+        if (!data && !diff) {
+            warnOnce(`No data or diff provided to GeoJSONSource ${this.id}.`);
+            return;
         }
-        this._pendingLoads++;
+
+        const options: LoadGeoJSONParameters = extend({type: this.type}, this.workerOptions);
+        if (data) {
+            if (typeof data === 'string') {
+                options.request = this.map._requestManager.transformRequest(browser.resolveURL(data as string), ResourceType.Source);
+                options.request.collectResourceTiming = this._collectResourceTiming;
+            } else {
+                options.data = JSON.stringify(data);
+            }
+
+            this._pendingWorkerUpdate.data = undefined;
+        } else if (diff) {
+            options.dataDiff = diff;
+            this._pendingWorkerUpdate.diff = undefined;
+        }
+
+        this._isUpdatingWorker = true;
         this.fire(new Event('dataloading', {dataType: 'source'}));
         try {
             const result = await this.actor.sendAsync({type: MessageType.loadData, data: options});
-            this._pendingLoads--;
+            this._isUpdatingWorker = false;
             if (this._removed || result.abandoned) {
                 this.fire(new Event('dataabort', {dataType: 'source'}));
                 return;
             }
+
+            this._data = result.data;
 
             let resourceTiming: PerformanceResourceTiming[] = null;
             if (result.resourceTiming && result.resourceTiming[this.id]) {
                 resourceTiming = result.resourceTiming[this.id].slice(0);
             }
 
-            const data: any = {dataType: 'source'};
+            const eventData: any = {dataType: 'source'};
             if (this._collectResourceTiming && resourceTiming && resourceTiming.length > 0) {
-                extend(data, {resourceTiming});
+                extend(eventData, {resourceTiming});
             }
 
             // although GeoJSON sources contain no metadata, we fire this event to let the SourceCache
             // know its ok to start requesting tiles.
-            this.fire(new Event('data', {...data, sourceDataType: 'metadata'}));
-            this.fire(new Event('data', {...data, sourceDataType: 'content'}));
+            this.fire(new Event('data', {...eventData, sourceDataType: 'metadata'}));
+            this.fire(new Event('data', {...eventData, sourceDataType: 'content'}));
         } catch (err) {
-            this._pendingLoads--;
+            this._isUpdatingWorker = false;
             if (this._removed) {
                 this.fire(new Event('dataabort', {dataType: 'source'}));
                 return;
             }
             this.fire(new ErrorEvent(err));
+        } finally {
+            // If there is more pending data, update worker again.
+            if (this._pendingWorkerUpdate.data || this._pendingWorkerUpdate.diff) {
+                this._updateWorkerData();
+            }
         }
     }
 
     loaded(): boolean {
-        return this._pendingLoads === 0;
+        return !this._isUpdatingWorker && this._pendingWorkerUpdate.data === undefined && this._pendingWorkerUpdate.diff === undefined;
     }
 
     async loadTile(tile: Tile): Promise<void> {

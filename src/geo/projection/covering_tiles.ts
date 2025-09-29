@@ -2,12 +2,12 @@ import {OverscaledTileID} from '../../source/tile_id';
 import {vec2, type vec4} from 'gl-matrix';
 import {MercatorCoordinate} from '../mercator_coordinate';
 import {degreesToRadians, scaleZoom} from '../../util/util';
-import {type Aabb, IntersectionResult} from '../../util/primitives/aabb';
 
 import type {IReadonlyTransform} from '../transform_interface';
 import type {Terrain} from '../../render/terrain';
 import type {Frustum} from '../../util/primitives/frustum';
 import {maxMercatorHorizonAngle} from './mercator_utils';
+import {type IBoundingVolume, IntersectionResult} from '../../util/primitives/bounding_volume';
 
 type CoveringTilesResult = {
     tileID: OverscaledTileID;
@@ -23,7 +23,15 @@ type CoveringTilesStackEntry = {
     fullyVisible: boolean;
 };
 
-export type CoveringZoomOptions = {
+export type CoveringTilesOptions = {
+    /**
+     * Smallest allowed tile zoom.
+     */
+    minzoom?: number;
+    /**
+     * Largest allowed tile zoom.
+     */
+    maxzoom?: number;
     /**
      * Whether to round or floor the target zoom level. If true, the value will be rounded to the closest integer. Otherwise the value will be floored.
      */
@@ -34,15 +42,7 @@ export type CoveringZoomOptions = {
     tileSize: number;
 };
 
-export type CoveringTilesOptions = CoveringZoomOptions & {
-    /**
-     * Smallest allowed tile zoom.
-     */
-    minzoom?: number;
-    /**
-     * Largest allowed tile zoom.
-     */
-    maxzoom?: number;
+export type CoveringTilesOptionsInternal = CoveringTilesOptions & {
     /**
      * `true` if tiles should be sent back to the worker for each overzoomed zoom level, `false` if not.
      * Fill this option when computing covering tiles for a source.
@@ -79,15 +79,14 @@ export type CalculateTileZoomFunction = (requestedCenterZoom: number,
  * A simple/heuristic function that returns whether the tile is visible under the current transform.
  * @returns an {@link IntersectionResult}.
  */
-export function isTileVisible(frustum: Frustum, aabb: Aabb, plane?: vec4): IntersectionResult {
-
-    const frustumTest = aabb.intersectsFrustum(frustum);
-    if (!plane) {
+export function isTileVisible(frustum: Frustum, tileBoundingVolume: IBoundingVolume, plane?: vec4): IntersectionResult {
+    const frustumTest = tileBoundingVolume.intersectsFrustum(frustum);
+    if (!plane || frustumTest === IntersectionResult.None) {
         return frustumTest;
     }
-    const planeTest = aabb.intersectsPlane(plane);
+    const planeTest = tileBoundingVolume.intersectsPlane(plane);
 
-    if (frustumTest === IntersectionResult.None || planeTest === IntersectionResult.None) {
+    if (planeTest === IntersectionResult.None) {
         return IntersectionResult.None;
     }
 
@@ -97,6 +96,7 @@ export function isTileVisible(frustum: Frustum, aabb: Aabb, plane?: vec4): Inter
 
     return IntersectionResult.Partial;
 }
+
 /**
  * Definite integral of cos(x)^p. The analytical solution is described in `developer-guides/covering-tiles.md`,
  * but here the integral is evaluated numerically.
@@ -160,7 +160,7 @@ const defaultCalculateTileZoom = createCalculateTileZoomFunction(defaultMaxZoomL
  * @param options - The options, most importantly the source's tile size.
  * @returns An integer zoom level at which all tiles will be visible.
  */
-export function coveringZoomLevel(transform: IReadonlyTransform, options: CoveringZoomOptions): number {
+export function coveringZoomLevel(transform: IReadonlyTransform, options: CoveringTilesOptions): number {
     const z = (options.roundZoom ? Math.round : Math.floor)(
         transform.zoom + scaleZoom(transform.tileSize / options.tileSize)
     );
@@ -180,7 +180,7 @@ export function coveringZoomLevel(transform: IReadonlyTransform, options: Coveri
  * @param details - Interface to define required helper functions.
  * @returns A list of tile coordinates, ordered by ascending distance from camera.
  */
-export function coveringTiles(transform: IReadonlyTransform, options: CoveringTilesOptions): OverscaledTileID[] {
+export function coveringTiles(transform: IReadonlyTransform, options: CoveringTilesOptionsInternal): OverscaledTileID[] {
     const frustum = transform.getCameraFrustum();
     const plane = transform.getClippingPlane();
     const cameraCoord = transform.screenPointToMercatorCoordinate(transform.getCameraPoint());
@@ -231,11 +231,11 @@ export function coveringTiles(transform: IReadonlyTransform, options: CoveringTi
         const y = it.y;
         let fullyVisible = it.fullyVisible;
         const tileID = {x, y, z: it.zoom};
-        const aabb = detailsProvider.getTileAABB(tileID, it.wrap, transform.elevation, options);
+        const boundingVolume = detailsProvider.getTileBoundingVolume(tileID, it.wrap, transform.elevation, options);
 
         // Visibility of a tile is not required if any of its ancestor is fully visible
         if (!fullyVisible) {
-            const intersectResult = isTileVisible(frustum, aabb, plane);
+            const intersectResult = isTileVisible(frustum, boundingVolume, plane);
 
             if (intersectResult === IntersectionResult.None)
                 continue;
@@ -243,7 +243,7 @@ export function coveringTiles(transform: IReadonlyTransform, options: CoveringTi
             fullyVisible = intersectResult === IntersectionResult.Full;
         }
 
-        const distToTile2d = detailsProvider.distanceToTile2d(cameraCoord.x, cameraCoord.y, tileID, aabb);
+        const distToTile2d = detailsProvider.distanceToTile2d(cameraCoord.x, cameraCoord.y, tileID, boundingVolume);
 
         let thisTileDesiredZ = desiredZ;
         if (allowVariableZoom) {

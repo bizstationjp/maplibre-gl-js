@@ -27,6 +27,7 @@ function createSource(options, transformCallback?, clearTiles = () => {}) {
                 }
             }
         },
+        getGlobalState: () => ({}),
         getPixelRatio() { return 1; },
     } as any as Map);
 
@@ -108,6 +109,17 @@ describe('VectorTileSource', () => {
 
         await promise;
         expect(dataloadingFired).toBeTruthy();
+    });
+
+    test('fires "error" event if TileJSON request fails', async () => {
+        server.respondWith('/source.json', [404, {}, '']);
+
+        const source = createSource({url: '/source.json'});
+        const errorEvent = waitForEvent(source, 'error', (e) => e.error.status === 404);
+        server.respond();
+
+        await expect(errorEvent).resolves.toBeDefined();
+        expect(source.loaded()).toBe(true);
     });
 
     test('serialize URL', () => {
