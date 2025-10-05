@@ -119,9 +119,9 @@ function updateScale(
 
     let maxMeters = left.distanceTo(right);
 
-    // For very small distances (when distanceTo returns 0 due to precision limits),
+    // For very small distances (when distanceTo returns 0 or less than 1 meter due to precision limits),
     // calculate meters per pixel directly from zoom level and latitude
-    if (maxMeters === 0 || maxMeters < 0.0001) {
+    if (maxMeters < 1.0) {
         const zoom = map.getZoom();
         const lat = map.getCenter().lat;
         // Earth circumference at the equator in meters
