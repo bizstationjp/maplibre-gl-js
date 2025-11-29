@@ -130,7 +130,7 @@ function updateScale(
         const circumferenceAtLat =
             earthCircumference * Math.cos((lat * Math.PI) / 180);
         // Meters per pixel at current zoom and latitude
-        const metersPerPixel = circumferenceAtLat / Math.pow(2, zoom + 8); // +8 for 256px tiles
+        const metersPerPixel = circumferenceAtLat / Math.pow(2, zoom + 9); // +9 for 512px tiles
         maxMeters = metersPerPixel * optWidth;
     }
     // The real distance corresponding to 100px scale length is rounded off to
